@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1220">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Storm Dashboard">
+  <meta name="description" content="Personal weather and storm chasing dashboard built as an installable iPhone-friendly PWA.">
+  <title>Storm Dashboard</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" sizes="192x192" href="assets/icon-192.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
+  <link rel="preconnect" href="https://api.open-meteo.com">
+  <link rel="preconnect" href="https://api.weather.gov">
+  <link rel="preconnect" href="https://api.rainviewer.com">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-chrome">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Storm Chasing PWA</p>
+        <h1>Storm Dashboard</h1>
+      </div>
+      <button id="refresh-button" class="glass-button" type="button">Refresh</button>
+    </header>
+
+    <div id="status-banner" class="status-banner hidden" role="status" aria-live="polite"></div>
+
+    <main class="screen-stack">
+      <section id="screen-home" class="screen active" aria-labelledby="tab-home">
+        <div class="hero-card">
+          <div class="hero-copy">
+            <p id="location-label" class="location-label">Locating you...</p>
+            <div class="hero-temp-row">
+              <span id="current-temp" class="current-temp">--</span>
+              <div>
+                <p id="current-condition" class="current-condition">Waiting for weather data</p>
+                <p id="current-summary" class="current-summary">Allow location access to load current conditions, forecast, radar, and alerts.</p>
+              </div>
+            </div>
+          </div>
+          <div class="hero-meta">
+            <span id="data-source-chip" class="chip chip-muted">No data yet</span>
+            <span id="last-updated" class="chip">Last updated: --</span>
+          </div>
+        </div>
+
+        <div id="home-error" class="inline-message hidden"></div>
+
+        <section class="panel-grid">
+          <article class="panel stat-panel">
+            <p class="panel-label">Feels Like</p>
+            <p id="feels-like" class="panel-value">--</p>
+          </article>
+          <article class="panel stat-panel">
+            <p class="panel-label">Wind</p>
+            <p id="wind-speed" class="panel-value">--</p>
+            <p id="wind-direction" class="panel-footnote">--</p>
+          </article>
+          <article class="panel stat-panel">
+            <p class="panel-label">Humidity</p>
+            <p id="humidity" class="panel-value">--</p>
+          </article>
+          <article class="panel stat-panel">
+            <p class="panel-label">Pressure</p>
+            <p id="pressure" class="panel-value">--</p>
+          </article>
+        </section>
+
+        <section class="panel">
+          <div class="section-heading">
+            <h2>Storm Signals</h2>
+            <span class="section-caption">Derived from forecast and current conditions</span>
+          </div>
+          <div id="severe-indicators" class="tag-list">
+            <span class="tag tag-muted">No indicators yet</span>
+          </div>
+        </section>
+      </section>
+
+      <section id="screen-forecast" class="screen" aria-labelledby="tab-forecast" hidden>
+        <section class="panel">
+          <div class="section-heading">
+            <h2>Hourly Forecast</h2>
+            <span class="section-caption">Next 12 hours</span>
+          </div>
+          <div id="hourly-forecast" class="hourly-strip loading-strip" aria-live="polite"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-heading">
+            <h2>Daily Outlook</h2>
+            <span class="section-caption">Next 7 days</span>
+          </div>
+          <div id="daily-forecast" class="daily-list" aria-live="polite"></div>
+        </section>
+      </section>
+
+      <section id="screen-radar" class="screen" aria-labelledby="tab-radar" hidden>
+        <section class="panel panel-map">
+          <div class="section-heading">
+            <h2>Radar</h2>
+            <span id="radar-status" class="section-caption">Loading map...</span>
+          </div>
+          <div id="radar-map" class="radar-map" role="img" aria-label="Weather radar map"></div>
+          <div class="map-actions">
+            <button id="locate-button" class="glass-button" type="button">Refresh Location</button>
+            <button id="center-radar-button" class="glass-button" type="button">Center Map</button>
+          </div>
+          <p class="map-note">
+            Radar uses RainViewer public radar tiles over OpenStreetMap. Coverage and freshness vary by region.
+          </p>
+        </section>
+      </section>
+
+      <section id="screen-alerts" class="screen" aria-labelledby="tab-alerts" hidden>
+        <section class="panel">
+          <div class="section-heading">
+            <h2>Active Alerts</h2>
+            <span id="alerts-status" class="section-caption">Waiting for location</span>
+          </div>
+          <div id="alerts-list" class="alerts-list" aria-live="polite"></div>
+        </section>
+      </section>
+
+      <section id="screen-settings" class="screen" aria-labelledby="tab-settings" hidden>
+        <section class="panel">
+          <div class="section-heading">
+            <h2>Live Mode</h2>
+            <span class="section-caption">Update weather using your selected interval</span>
+          </div>
+
+          <label class="setting-row" for="live-mode-toggle">
+            <span>
+              <strong>Enable Live Mode</strong>
+              <small>Refresh GPS and weather automatically.</small>
+            </span>
+            <span class="switch">
+              <input id="live-mode-toggle" type="checkbox">
+              <span class="slider"></span>
+            </span>
+          </label>
+
+          <label class="setting-row" for="interval-select">
+            <span>
+              <strong>Update Interval</strong>
+              <small>Weather refresh cadence when live mode is on.</small>
+            </span>
+            <select id="interval-select" class="select-input">
+              <option value="30000">30 sec</option>
+              <option value="60000">1 min</option>
+              <option value="120000">2 min</option>
+              <option value="300000">5 min</option>
+            </select>
+          </label>
+
+          <div class="setting-block">
+            <strong>Units</strong>
+            <small>Choose your preferred temperature and wind units.</small>
+            <div class="segmented-control">
+              <button id="units-us" class="segment active" type="button" data-units="us">F / mph</button>
+              <button id="units-metric" class="segment" type="button" data-units="metric">C / km/h</button>
+            </div>
+          </div>
+
+          <div class="setting-block">
+            <strong>Data Notes</strong>
+            <small id="cache-note">Forecast data is loaded on demand and cached to avoid unnecessary refreshes.</small>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <nav class="tab-bar" aria-label="App tabs">
+      <button id="tab-home" class="tab-button active" type="button" data-screen="home">
+        <span class="tab-icon">⌂</span>
+        <span class="tab-label">Home</span>
+      </button>
+      <button id="tab-forecast" class="tab-button" type="button" data-screen="forecast">
+        <span class="tab-icon">◔</span>
+        <span class="tab-label">Forecast</span>
+      </button>
+      <button id="tab-radar" class="tab-button" type="button" data-screen="radar">
+        <span class="tab-icon">◎</span>
+        <span class="tab-label">Radar</span>
+      </button>
+      <button id="tab-alerts" class="tab-button" type="button" data-screen="alerts">
+        <span class="tab-icon">!</span>
+        <span class="tab-label">Alerts</span>
+      </button>
+      <button id="tab-settings" class="tab-button" type="button" data-screen="settings">
+        <span class="tab-icon">⋯</span>
+        <span class="tab-label">Settings</span>
+      </button>
+    </nav>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
