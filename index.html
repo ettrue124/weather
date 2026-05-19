@@ -22,9 +22,10 @@
 <body>
   <div class="app-chrome">
     <header class="topbar">
-      <div>
+      <div class="topbar-copy">
         <p class="eyebrow">Storm Chasing PWA</p>
         <h1>Storm Dashboard</h1>
+        <p class="topbar-subtitle">Local weather, radar, alerts, and chase context in one fast mobile layout.</p>
       </div>
       <button id="refresh-button" class="glass-button" type="button">Refresh</button>
     </header>
@@ -72,7 +73,7 @@
           </article>
         </section>
 
-        <section class="panel">
+        <section class="panel emphasis-panel">
           <div class="section-heading">
             <h2>Storm Signals</h2>
             <span class="section-caption">Derived from forecast and current conditions</span>
@@ -82,26 +83,18 @@
           </div>
         </section>
 
-        <section class="panel">
+        <section class="panel chase-panel">
           <div class="section-heading">
             <h2>Chase Tools</h2>
             <span class="section-caption">Fast severe-weather situational awareness links</span>
           </div>
-          <div id="chase-score" class="chase-score">Chase score: --</div>
-          <div id="chase-window" class="chase-window">Best chase window: --</div>
+          <div class="chase-meta">
+            <div id="chase-score" class="chase-score">Chase score: --</div>
+            <div id="chase-window" class="chase-window">Best chase window: --</div>
+          </div>
           <div id="chase-links" class="quick-links"></div>
         </section>
       </section>
-
-        <section class="panel">
-          <div class="section-heading">
-            <h2>Chase Tools</h2>
-            <span class="section-caption">Fast severe-weather situational awareness links</span>
-          </div>
-          <div id="chase-score" class="chase-score">Chase score: --</div>
-          <div id="chase-window" class="chase-window">Best chase window: --</div>
-          <div id="chase-links" class="quick-links"></div>
-        </section>
 
       <section id="screen-forecast" class="screen" aria-labelledby="tab-forecast" hidden>
         <section class="panel">
@@ -196,25 +189,54 @@
       </section>
     </main>
 
-    <nav class="tab-bar" aria-label="App tabs">
-      <button id="tab-home" class="tab-button active" type="button" data-screen="home">
-        <span class="tab-icon">⌂</span>
+    <nav class="tab-bar" aria-label="App tabs" role="tablist">
+      <button id="tab-home" class="tab-button active" type="button" data-screen="home" role="tab" aria-selected="true" aria-controls="screen-home" aria-label="Home">
+        <span class="tab-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <path d="M4 11.5 12 5l8 6.5"></path>
+            <path d="M7.5 10.5V19h9v-8.5"></path>
+          </svg>
+        </span>
         <span class="tab-label">Home</span>
       </button>
-      <button id="tab-forecast" class="tab-button" type="button" data-screen="forecast">
-        <span class="tab-icon">◔</span>
+      <button id="tab-forecast" class="tab-button" type="button" data-screen="forecast" role="tab" aria-selected="false" aria-controls="screen-forecast" aria-label="Forecast">
+        <span class="tab-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <path d="M6 18h12"></path>
+            <path d="M8 15 11 11l3 2 4-6"></path>
+            <path d="M18 7h.01"></path>
+          </svg>
+        </span>
         <span class="tab-label">Forecast</span>
       </button>
-      <button id="tab-radar" class="tab-button" type="button" data-screen="radar">
-        <span class="tab-icon">◎</span>
+      <button id="tab-radar" class="tab-button" type="button" data-screen="radar" role="tab" aria-selected="false" aria-controls="screen-radar" aria-label="Radar">
+        <span class="tab-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <path d="M12 4a8 8 0 1 1-8 8"></path>
+            <path d="M12 8a4 4 0 1 1-4 4"></path>
+            <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"></circle>
+          </svg>
+        </span>
         <span class="tab-label">Radar</span>
       </button>
-      <button id="tab-alerts" class="tab-button" type="button" data-screen="alerts">
-        <span class="tab-icon">!</span>
+      <button id="tab-alerts" class="tab-button" type="button" data-screen="alerts" role="tab" aria-selected="false" aria-controls="screen-alerts" aria-label="Alerts">
+        <span class="tab-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <path d="M12 4 4.5 18h15L12 4Z"></path>
+            <path d="M12 9v4"></path>
+            <path d="M12 16h.01"></path>
+          </svg>
+        </span>
         <span class="tab-label">Alerts</span>
       </button>
-      <button id="tab-settings" class="tab-button" type="button" data-screen="settings">
-        <span class="tab-icon">⋯</span>
+      <button id="tab-settings" class="tab-button" type="button" data-screen="settings" role="tab" aria-selected="false" aria-controls="screen-settings" aria-label="Settings">
+        <span class="tab-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <path d="M12 8h.01"></path>
+            <path d="M12 12h.01"></path>
+            <path d="M12 16h.01"></path>
+          </svg>
+        </span>
         <span class="tab-label">Settings</span>
       </button>
     </nav>

@@ -7,6 +7,7 @@ const DEFAULT_SETTINGS = {
 const WEATHER_CACHE_TTL_MS = 120000;
 const ALERTS_CACHE_TTL_MS = 300000;
 const GEOCODE_CACHE_TTL_MS = 3600000;
+const DEGREE = "\u00B0";
 
 const state = {
   settings: loadSettings(),
@@ -21,9 +22,10 @@ const state = {
   radarMap: null,
   radarLayer: null,
   radarMarker: null,
-  radarFrameLabel: "Loading radar...",
   liveTimer: null,
-  online: navigator.onLine
+  online: navigator.onLine,
+  initialized: false,
+  isRefreshing: false
 };
 
 const elements = {
@@ -60,14 +62,26 @@ const elements = {
   chaseLinks: document.getElementById("chase-links")
 };
 
-document.addEventListener("DOMContentLoaded", () => {
+function initializeApp() {
+  if (state.initialized) {
+    return;
+  }
+
+  state.initialized = true;
   bindEvents();
   applySettingsToUi();
   initMap();
   registerServiceWorker();
+  switchScreen(state.currentScreen);
   refreshDashboard({ forceFresh: false, reason: "initial" });
   syncLiveMode();
-});
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initializeApp, { once: true });
+} else {
+  initializeApp();
+}
 
 function bindEvents() {
   elements.tabs.forEach((button) => {
@@ -141,7 +155,13 @@ function switchScreen(screenName) {
 }
 
 async function refreshDashboard({ forceFresh = false, reason = "manual" } = {}) {
+  if (state.isRefreshing && reason !== "live-mode") {
+    return;
+  }
+
   clearHomeError();
+  state.isRefreshing = true;
+  setButtonLoading(true);
 
   try {
     const position = await getCurrentPosition();
@@ -149,32 +169,29 @@ async function refreshDashboard({ forceFresh = false, reason = "manual" } = {}) 
     renderLocationHeader();
     updateRadarPosition(position);
 
-    let placeValue = null;
     try {
-      placeValue = await loadPlaceLabel(position, forceFresh);
-      if (placeValue) {
-        state.placeLabel = placeValue;
-        renderLocationHeader();
+      const placeLabel = await loadPlaceLabel(position, forceFresh);
+      if (placeLabel) {
+        state.placeLabel = placeLabel;
       }
     } catch {
       state.placeLabel = buildCoordinateLabel(position.coords.latitude, position.coords.longitude);
-      renderLocationHeader();
     }
 
-    const lookups = [
+    renderLocationHeader();
+
+    const [weatherResult, alertsResult] = await Promise.allSettled([
       loadWeather(position, forceFresh),
       loadAlerts(position, forceFresh),
       refreshRadarLayer()
-    ];
-
-    const [weatherResult, alertsResult] = await Promise.allSettled(lookups);
+    ]);
 
     if (weatherResult.status === "rejected") {
-      renderHomeError(weatherResult.reason.message || "Weather data is currently unavailable.");
+      renderHomeError(weatherResult.reason?.message || "Weather data is currently unavailable.");
     }
 
     if (alertsResult.status === "rejected") {
-      renderAlertsError(alertsResult.reason.message || "Weather alerts are currently unavailable.");
+      renderAlertsError(alertsResult.reason?.message || "Weather alerts are currently unavailable.");
     }
 
     if (reason === "manual") {
@@ -182,6 +199,9 @@ async function refreshDashboard({ forceFresh = false, reason = "manual" } = {}) 
     }
   } catch (error) {
     handleLocationError(error);
+  } finally {
+    state.isRefreshing = false;
+    setButtonLoading(false);
   }
 }
 
@@ -210,15 +230,13 @@ async function loadPlaceLabel(position, forceFresh) {
   }
 
   const payload = await response.json();
-  const firstResult = payload.results && payload.results[0];
+  const firstResult = payload.results?.[0];
   if (!firstResult) {
     return buildCoordinateLabel(lat, lon);
   }
 
-  const parts = [firstResult.name, firstResult.admin1].filter(Boolean);
-  const label = parts.length ? parts.join(", ") : buildCoordinateLabel(lat, lon);
   const data = {
-    label,
+    label: [firstResult.name, firstResult.admin1].filter(Boolean).join(", ") || buildCoordinateLabel(lat, lon),
     countryCode: firstResult.country_code || null
   };
 
@@ -232,17 +250,14 @@ async function loadWeather(position, forceFresh) {
   const lon = position.coords.longitude;
   const units = getUnitConfig();
   const cacheKey = `weather:${roundCoordinate(lat, 2)},${roundCoordinate(lon, 2)}:${state.settings.units}`;
-  const weatherTtl = state.settings.liveMode
+  const ttl = state.settings.liveMode
     ? Math.max(25000, state.settings.intervalMs - 5000)
     : WEATHER_CACHE_TTL_MS;
-  const cached = readCache(cacheKey, weatherTtl);
+  const cached = readCache(cacheKey, ttl);
 
   if (cached && !forceFresh) {
     state.weather = cached.data;
-    state.weatherMeta = {
-      source: "cache",
-      fetchedAt: cached.savedAt
-    };
+    state.weatherMeta = { source: "cache", fetchedAt: cached.savedAt };
     renderWeather();
     return cached.data;
   }
@@ -290,10 +305,7 @@ async function loadWeather(position, forceFresh) {
 
     const payload = await response.json();
     state.weather = payload;
-    state.weatherMeta = {
-      source: "fresh",
-      fetchedAt: Date.now()
-    };
+    state.weatherMeta = { source: "fresh", fetchedAt: Date.now() };
     writeCache(cacheKey, payload);
     renderWeather();
     return payload;
@@ -301,10 +313,7 @@ async function loadWeather(position, forceFresh) {
     const staleCache = readCache(cacheKey);
     if (staleCache) {
       state.weather = staleCache.data;
-      state.weatherMeta = {
-        source: "stale-cache",
-        fetchedAt: staleCache.savedAt
-      };
+      state.weatherMeta = { source: "stale-cache", fetchedAt: staleCache.savedAt };
       renderWeather();
       return staleCache.data;
     }
@@ -318,35 +327,25 @@ async function loadAlerts(position, forceFresh) {
   const lon = position.coords.longitude;
   const cacheKey = `alerts:${roundCoordinate(lat, 2)},${roundCoordinate(lon, 2)}`;
   const cached = readCache(cacheKey, ALERTS_CACHE_TTL_MS);
-  const countryCode = state.reverseLookup && state.reverseLookup.countryCode;
+  const countryCode = state.reverseLookup?.countryCode;
 
   if (countryCode && countryCode !== "US") {
     state.alerts = [];
-    state.alertsMeta = {
-      source: "unsupported-region",
-      fetchedAt: Date.now()
-    };
+    state.alertsMeta = { source: "unsupported-region", fetchedAt: Date.now() };
     renderAlerts();
     return [];
   }
 
   if (cached && !forceFresh) {
     state.alerts = cached.data;
-    state.alertsMeta = {
-      source: "cache",
-      fetchedAt: cached.savedAt
-    };
+    state.alertsMeta = { source: "cache", fetchedAt: cached.savedAt };
     renderAlerts();
     return cached.data;
   }
 
-  const url = `https://api.weather.gov/alerts/active?point=${lat},${lon}`;
-
   try {
-    const response = await fetch(url, {
-      headers: {
-        Accept: "application/geo+json"
-      }
+    const response = await fetch(`https://api.weather.gov/alerts/active?point=${lat},${lon}`, {
+      headers: { Accept: "application/geo+json" }
     });
 
     if (!response.ok) {
@@ -356,10 +355,7 @@ async function loadAlerts(position, forceFresh) {
     const payload = await response.json();
     const features = Array.isArray(payload.features) ? payload.features : [];
     state.alerts = features;
-    state.alertsMeta = {
-      source: "fresh",
-      fetchedAt: Date.now()
-    };
+    state.alertsMeta = { source: "fresh", fetchedAt: Date.now() };
     writeCache(cacheKey, features);
     renderAlerts();
     return features;
@@ -367,10 +363,7 @@ async function loadAlerts(position, forceFresh) {
     const staleCache = readCache(cacheKey);
     if (staleCache) {
       state.alerts = staleCache.data;
-      state.alertsMeta = {
-        source: "stale-cache",
-        fetchedAt: staleCache.savedAt
-      };
+      state.alertsMeta = { source: "stale-cache", fetchedAt: staleCache.savedAt };
       renderAlerts();
       return staleCache.data;
     }
@@ -384,33 +377,35 @@ async function refreshRadarLayer() {
     return;
   }
 
-  const response = await fetch("https://api.rainviewer.com/public/weather-maps.json");
-  if (!response.ok) {
+  try {
+    const response = await fetch("https://api.rainviewer.com/public/weather-maps.json");
+    if (!response.ok) {
+      elements.radarStatus.textContent = "Radar unavailable";
+      return;
+    }
+
+    const payload = await response.json();
+    const latestFrame = payload.radar?.past?.[payload.radar.past.length - 1];
+
+    if (!latestFrame) {
+      elements.radarStatus.textContent = "No radar frames found";
+      return;
+    }
+
+    const tileUrl = `${payload.host}${latestFrame.path}/256/{z}/{x}/{y}/6/1_1.png`;
+    elements.radarStatus.textContent = `Radar frame ${formatFrameTime(latestFrame.time)}`;
+
+    if (state.radarLayer) {
+      state.radarMap.removeLayer(state.radarLayer);
+    }
+
+    state.radarLayer = L.tileLayer(tileUrl, {
+      opacity: 0.72,
+      attribution: "&copy; OpenStreetMap contributors | Radar &copy; RainViewer"
+    }).addTo(state.radarMap);
+  } catch {
     elements.radarStatus.textContent = "Radar unavailable";
-    return;
   }
-
-  const payload = await response.json();
-  const latestFrame = payload.radar && payload.radar.past && payload.radar.past[payload.radar.past.length - 1];
-
-  if (!latestFrame) {
-    elements.radarStatus.textContent = "No radar frames found";
-    return;
-  }
-
-  const tileUrl = `${payload.host}${latestFrame.path}/256/{z}/{x}/{y}/6/1_1.png`;
-  elements.radarStatus.textContent = `Radar frame ${formatFrameTime(latestFrame.time)}`;
-
-  if (state.radarLayer) {
-    state.radarMap.removeLayer(state.radarLayer);
-  }
-
-  /* RainViewer's free public tiles are suitable for personal use, but coverage
-     and availability can vary by region and provider uptime. */
-  state.radarLayer = L.tileLayer(tileUrl, {
-    opacity: 0.72,
-    attribution: '&copy; OpenStreetMap contributors | Radar &copy; RainViewer'
-  }).addTo(state.radarMap);
 }
 
 function renderLocationHeader() {
@@ -431,23 +426,20 @@ function renderWeather() {
 
   const { current, hourly, daily } = state.weather;
   const units = getUnitConfig();
-  const condition = describeWeatherCode(current.weather_code, current.is_day === 1);
-  const summary = buildSummary(current, daily);
-  const severeIndicators = buildSevereIndicators(current, hourly, daily);
 
-  elements.currentTemp.textContent = `${Math.round(current.temperature_2m)}°`;
-  elements.currentCondition.textContent = condition.label;
-  elements.currentSummary.textContent = summary;
+  elements.currentTemp.textContent = `${Math.round(current.temperature_2m)}${DEGREE}`;
+  elements.currentCondition.textContent = describeWeatherCode(current.weather_code, current.is_day === 1).label;
+  elements.currentSummary.textContent = buildSummary(current, daily);
   elements.feelsLike.textContent = `${Math.round(current.apparent_temperature)}${units.temperatureSymbol}`;
   elements.windSpeed.textContent = `${Math.round(current.wind_speed_10m)} ${units.windLabel}`;
-  elements.windDirection.textContent = `${degreesToCompass(current.wind_direction_10m)} ${Math.round(current.wind_direction_10m)}°`;
+  elements.windDirection.textContent = `${degreesToCompass(current.wind_direction_10m)} ${Math.round(current.wind_direction_10m)}${DEGREE}`;
   elements.humidity.textContent = `${Math.round(current.relative_humidity_2m)}%`;
   elements.pressure.textContent = `${Math.round(current.surface_pressure)} hPa`;
-  elements.lastUpdated.textContent = `Last updated: ${formatClock(state.weatherMeta && state.weatherMeta.fetchedAt)}`;
+  elements.lastUpdated.textContent = `Last updated: ${formatClock(state.weatherMeta?.fetchedAt)}`;
   elements.dataSourceChip.textContent = buildSourceLabel();
   elements.dataSourceChip.className = `chip ${buildSourceClass()}`;
 
-  renderSevereIndicators(severeIndicators);
+  renderSevereIndicators(buildSevereIndicators(current, hourly, daily));
   renderHourlyForecast(hourly);
   renderDailyForecast(daily);
   renderChaseTools(current, hourly, daily);
@@ -474,18 +466,15 @@ function renderHourlyForecast(hourly) {
   }));
 
   elements.hourlyForecast.classList.remove("loading-strip");
-  elements.hourlyForecast.innerHTML = hours.map((hour) => {
-    const condition = describeWeatherCode(hour.weatherCode, true);
-    return `
-      <article class="hour-card">
-        <div class="hour-time">${formatHour(hour.time)}</div>
-        <div class="hour-temp">${Math.round(hour.temperature)}°</div>
-        <div class="hour-meta">${condition.label}</div>
-        <div class="hour-meta">${hour.precipitationProbability || 0}% precip</div>
-        <div class="hour-meta">Gust ${Math.round(hour.windGust || 0)} ${getUnitConfig().windLabel}</div>
-      </article>
-    `;
-  }).join("");
+  elements.hourlyForecast.innerHTML = hours.map((hour) => `
+    <article class="hour-card">
+      <div class="hour-time">${formatHour(hour.time)}</div>
+      <div class="hour-temp">${Math.round(hour.temperature)}${DEGREE}</div>
+      <div class="hour-meta">${describeWeatherCode(hour.weatherCode, true).label}</div>
+      <div class="hour-meta">${hour.precipitationProbability || 0}% precip</div>
+      <div class="hour-meta">Gust ${Math.round(hour.windGust || 0)} ${getUnitConfig().windLabel}</div>
+    </article>
+  `).join("");
 }
 
 function renderDailyForecast(daily) {
@@ -498,19 +487,97 @@ function renderDailyForecast(daily) {
     code: daily.weather_code[index]
   }));
 
-  elements.dailyForecast.innerHTML = days.map((day) => {
-    const condition = describeWeatherCode(day.code, true);
-    return `
-      <article class="daily-row">
-        <div class="day-name">${formatDay(day.time)}</div>
-        <div>
-          <div class="daily-summary">${condition.label}</div>
-          <div class="day-meta">${day.precip || 0}% precip • Gust ${Math.round(day.gust || 0)} ${getUnitConfig().windLabel}</div>
-        </div>
-        <div class="day-temps">${Math.round(day.max)}° / ${Math.round(day.min)}°</div>
-      </article>
-    `;
-  }).join("");
+  elements.dailyForecast.innerHTML = days.map((day) => `
+    <article class="daily-row">
+      <div class="day-name">${formatDay(day.time)}</div>
+      <div>
+        <div class="daily-summary">${describeWeatherCode(day.code, true).label}</div>
+        <div class="day-meta">${day.precip || 0}% precip | Gust ${Math.round(day.gust || 0)} ${getUnitConfig().windLabel}</div>
+      </div>
+      <div class="day-temps">${Math.round(day.max)}${DEGREE} / ${Math.round(day.min)}${DEGREE}</div>
+    </article>
+  `).join("");
+}
+
+function renderChaseTools(current, hourly, daily) {
+  const scoreData = calculateChaseScore(current, hourly, daily);
+  elements.chaseScore.textContent = `Chase score: ${scoreData.score}/100 (${scoreData.level})`;
+  elements.chaseWindow.textContent = `Best chase window: ${scoreData.window}`;
+
+  if (!state.position) {
+    elements.chaseLinks.innerHTML = "";
+    return;
+  }
+
+  const lat = state.position.coords.latitude.toFixed(2);
+  const lon = state.position.coords.longitude.toFixed(2);
+  const links = [
+    { label: "SPC Outlook", href: "https://www.spc.noaa.gov/products/outlook/" },
+    { label: "Mesoanalysis", href: "https://www.spc.noaa.gov/exper/mesoanalysis/new/viewsector.php?sector=17&parm=mlcape" },
+    { label: "NWS Forecast", href: `https://forecast.weather.gov/MapClick.php?lat=${lat}&lon=${lon}` },
+    { label: "Pivotal Weather", href: `https://www.pivotalweather.com/maps.php?ds=rtma&lat=${lat}&lon=${lon}&zoom=7` }
+  ];
+
+  elements.chaseLinks.innerHTML = links
+    .map((item) => `<a class="quick-link" href="${item.href}" target="_blank" rel="noopener noreferrer">${item.label}</a>`)
+    .join("");
+}
+
+function calculateChaseScore(current, hourly, daily) {
+  const thunderCodes = new Set([95, 96, 99]);
+  const convectiveCodes = new Set([80, 81, 82, 95, 96, 99]);
+  const unitWindThreshold = state.settings.units === "metric" ? 60 : 40;
+
+  let score = 15;
+  let bestIndex = 0;
+  let bestValue = -1;
+
+  for (let index = 0; index < Math.min(12, hourly.time.length); index += 1) {
+    const gust = hourly.wind_gusts_10m[index] || 0;
+    const precip = hourly.precipitation_probability[index] || 0;
+    const code = hourly.weather_code[index];
+    let risk = precip * 0.4 + gust * 0.8;
+
+    if (convectiveCodes.has(code)) {
+      risk += 30;
+    }
+    if (thunderCodes.has(code)) {
+      risk += 45;
+    }
+    if (risk > bestValue) {
+      bestValue = risk;
+      bestIndex = index;
+    }
+  }
+
+  const gustValues = daily.wind_gusts_10m_max.filter(Number.isFinite);
+  const precipValues = daily.precipitation_probability_max.filter(Number.isFinite);
+  const maxGust = gustValues.length ? Math.max(...gustValues) : 0;
+  const precipMax = precipValues.length ? Math.max(...precipValues) : 0;
+
+  if (thunderCodes.has(current.weather_code)) {
+    score += 35;
+  }
+  if (maxGust >= unitWindThreshold) {
+    score += 20;
+  }
+  if (precipMax >= 60) {
+    score += 15;
+  }
+  if (current.surface_pressure <= 1002) {
+    score += 15;
+  }
+  if (bestValue > 80) {
+    score += 20;
+  }
+
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  const level = score >= 75 ? "High potential" : score >= 45 ? "Conditional" : "Low-end";
+  const window = hourly.time.length
+    ? `${formatHour(hourly.time[bestIndex])} - ${formatHour(hourly.time[Math.min(bestIndex + 2, hourly.time.length - 1)])}`
+    : "Unavailable";
+
+  return { score, level, window };
 }
 
 
@@ -576,7 +643,7 @@ function calculateChaseScore(current, hourly, daily) {
 }
 
 function renderAlerts() {
-  const metaSource = state.alertsMeta && state.alertsMeta.source;
+  const metaSource = state.alertsMeta?.source;
 
   if (metaSource === "unsupported-region") {
     elements.alertsStatus.textContent = "U.S. weather.gov alerts only";
@@ -598,15 +665,14 @@ function renderAlerts() {
     const severity = props.severity || "Unknown";
     const urgency = props.urgency || "Unknown";
     const expires = props.expires ? new Date(props.expires) : null;
-    const cssClass = severityToClass(severity, props.event);
     const description = props.description
-      ? escapeHtml(props.description.slice(0, 280)) + (props.description.length > 280 ? "..." : "")
+      ? `${escapeHtml(props.description.slice(0, 280))}${props.description.length > 280 ? "..." : ""}`
       : "No description provided.";
 
     return `
-      <article class="alert-card ${cssClass}">
+      <article class="alert-card ${severityToClass(severity, props.event)}">
         <h3 class="alert-title">${escapeHtml(props.headline || props.event || "Weather Alert")}</h3>
-        <p class="alert-meta">${escapeHtml(severity)} severity • ${escapeHtml(urgency)} urgency • Expires ${expires ? formatDateTime(expires) : "Unknown"}</p>
+        <p class="alert-meta">${escapeHtml(severity)} severity | ${escapeHtml(urgency)} urgency | Expires ${expires ? formatDateTime(expires) : "Unknown"}</p>
         <p class="alert-description">${description}</p>
       </article>
     `;
@@ -629,7 +695,7 @@ function clearHomeError() {
 }
 
 function handleLocationError(error) {
-  const message = error && error.code === 1
+  const message = error?.code === 1
     ? "Location permission was denied. Enable location access in Safari or your browser settings."
     : "Unable to read your location right now. Check GPS permissions and try again.";
 
@@ -730,9 +796,11 @@ function registerServiceWorker() {
   }
 
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("service-worker.js").catch(() => {
-      showBanner("Service worker registration failed. Offline shell support is unavailable.", true);
-    });
+    navigator.serviceWorker.register("service-worker.js")
+      .then((registration) => registration.update().catch(() => {}))
+      .catch(() => {
+        showBanner("Service worker registration failed. Offline shell support is unavailable.", true);
+      });
   });
 }
 
@@ -799,7 +867,7 @@ function getUnitConfig() {
       temperatureApi: "celsius",
       windApi: "kmh",
       precipitationApi: "mm",
-      temperatureSymbol: "°C",
+      temperatureSymbol: `${DEGREE}C`,
       windLabel: "km/h"
     };
   }
@@ -808,7 +876,7 @@ function getUnitConfig() {
     temperatureApi: "fahrenheit",
     windApi: "mph",
     precipitationApi: "inch",
-    temperatureSymbol: "°F",
+    temperatureSymbol: `${DEGREE}F`,
     windLabel: "mph"
   };
 }
@@ -818,13 +886,15 @@ function buildSummary(current, daily) {
   const todayLow = daily.temperature_2m_min[0];
   const precipChance = daily.precipitation_probability_max[0];
   const condition = describeWeatherCode(current.weather_code, current.is_day === 1).label;
-  return `${condition}. High ${Math.round(todayHigh)}°, low ${Math.round(todayLow)}°, ${precipChance || 0}% precip chance today.`;
+  return `${condition}. High ${Math.round(todayHigh)}${DEGREE}, low ${Math.round(todayLow)}${DEGREE}, ${precipChance || 0}% precip chance today.`;
 }
 
 function buildSevereIndicators(current, hourly, daily) {
   const items = [];
-  const maxGustToday = Math.max(...daily.wind_gusts_10m_max.filter(Number.isFinite));
-  const maxPrecipToday = Math.max(...daily.precipitation_probability_max.filter(Number.isFinite));
+  const gustValues = daily.wind_gusts_10m_max.filter(Number.isFinite);
+  const precipValues = daily.precipitation_probability_max.filter(Number.isFinite);
+  const maxGustToday = gustValues.length ? Math.max(...gustValues) : 0;
+  const maxPrecipToday = precipValues.length ? Math.max(...precipValues) : 0;
   const thunderCodes = [95, 96, 99];
   const showerCodes = [80, 81, 82];
 
@@ -942,6 +1012,12 @@ function showBanner(message, isError = false, timeoutMs = 3200) {
   showBanner.timerId = setTimeout(() => {
     elements.statusBanner.classList.add("hidden");
   }, timeoutMs);
+}
+
+function setButtonLoading(isLoading) {
+  elements.refreshButton.disabled = isLoading;
+  elements.refreshButton.textContent = isLoading ? "Refreshing..." : "Refresh";
+  elements.locateButton.disabled = isLoading;
 }
 
 function roundCoordinate(value, digits) {

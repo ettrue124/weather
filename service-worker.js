@@ -1,4 +1,4 @@
-const STATIC_CACHE = "storm-dashboard-static-v1";
+const STATIC_CACHE = "storm-dashboard-static-v2";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -40,9 +40,17 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   const isSameOrigin = url.origin === self.location.origin;
 
-  if (isSameOrigin) {
-    event.respondWith(
-      caches.match(event.request).then((cached) => cached || fetch(event.request))
-    );
+  if (!isSameOrigin) {
+    return;
   }
+
+  event.respondWith(
+    fetch(event.request)
+      .then((response) => {
+        const clone = response.clone();
+        caches.open(STATIC_CACHE).then((cache) => cache.put(event.request, clone));
+        return response;
+      })
+      .catch(() => caches.match(event.request))
+  );
 });
