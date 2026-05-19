@@ -1,4 +1,4 @@
-const STATIC_CACHE = "storm-dashboard-static-v3";
+const STATIC_CACHE = "weatherfront-static-v4";
 const APP_SHELL = [
   "./",
   "./index.html",

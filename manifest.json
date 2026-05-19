@@ -1,13 +1,13 @@
 {
-  "name": "Storm Dashboard",
-  "short_name": "StormDash",
-  "description": "A personal weather and storm chasing Progressive Web App designed for iPhone Home Screen use.",
+  "name": "WeatherFront",
+  "short_name": "WeatherFront",
+  "description": "A storm-focused mobile weather experience with radar, outlooks, models, satellite, mapping, and observations.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0b1220",
-  "theme_color": "#0b1220",
+  "background_color": "#05060a",
+  "theme_color": "#05060a",
   "icons": [
     {
       "src": "assets/icon-192.png",
