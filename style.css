@@ -654,3 +654,31 @@ button {
     font-size: 0.72rem;
   }
 }
+
+.chase-score {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.chase-window {
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+
+.quick-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.quick-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  text-decoration: none;
+  background: rgba(255,255,255,0.06);
+}
