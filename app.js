@@ -54,7 +54,10 @@ const elements = {
   liveModeToggle: document.getElementById("live-mode-toggle"),
   intervalSelect: document.getElementById("interval-select"),
   unitsButtons: [...document.querySelectorAll(".segment")],
-  cacheNote: document.getElementById("cache-note")
+  cacheNote: document.getElementById("cache-note"),
+  chaseScore: document.getElementById("chase-score"),
+  chaseWindow: document.getElementById("chase-window"),
+  chaseLinks: document.getElementById("chase-links")
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -447,6 +450,7 @@ function renderWeather() {
   renderSevereIndicators(severeIndicators);
   renderHourlyForecast(hourly);
   renderDailyForecast(daily);
+  renderChaseTools(current, hourly, daily);
 }
 
 function renderSevereIndicators(indicators) {
@@ -507,6 +511,68 @@ function renderDailyForecast(daily) {
       </article>
     `;
   }).join("");
+}
+
+
+function renderChaseTools(current, hourly, daily) {
+  const scoreData = calculateChaseScore(current, hourly, daily);
+  elements.chaseScore.textContent = `Chase score: ${scoreData.score}/100 (${scoreData.level})`;
+  elements.chaseWindow.textContent = `Best chase window: ${scoreData.window}`;
+
+  if (!state.position) {
+    elements.chaseLinks.innerHTML = "";
+    return;
+  }
+
+  const lat = state.position.coords.latitude.toFixed(2);
+  const lon = state.position.coords.longitude.toFixed(2);
+  const links = [
+    { label: "SPC Outlook", href: "https://www.spc.noaa.gov/products/outlook/" },
+    { label: "Mesoanalysis", href: `https://www.spc.noaa.gov/exper/mesoanalysis/new/viewsector.php?sector=17&parm=mlcape` },
+    { label: "NWS Forecast", href: `https://forecast.weather.gov/MapClick.php?lat=${lat}&lon=${lon}` },
+    { label: "Pivotal Weather", href: `https://www.pivotalweather.com/maps.php?ds=rtma&lat=${lat}&lon=${lon}&zoom=7` }
+  ];
+
+  elements.chaseLinks.innerHTML = links
+    .map((item) => `<a class="quick-link" href="${item.href}" target="_blank" rel="noopener noreferrer">${item.label}</a>`)
+    .join("");
+}
+
+function calculateChaseScore(current, hourly, daily) {
+  const thunderCodes = new Set([95, 96, 99]);
+  const convectiveCodes = new Set([80, 81, 82, 95, 96, 99]);
+  const unitWindThreshold = state.settings.units === "metric" ? 60 : 40;
+
+  let score = 15;
+  let bestIndex = 0;
+  let bestValue = -1;
+
+  for (let i = 0; i < Math.min(12, hourly.time.length); i += 1) {
+    const gust = hourly.wind_gusts_10m[i] || 0;
+    const precip = hourly.precipitation_probability[i] || 0;
+    const code = hourly.weather_code[i];
+    let risk = precip * 0.4 + gust * 0.8;
+    if (convectiveCodes.has(code)) risk += 30;
+    if (thunderCodes.has(code)) risk += 45;
+    if (risk > bestValue) {
+      bestValue = risk;
+      bestIndex = i;
+    }
+  }
+
+  if (thunderCodes.has(current.weather_code)) score += 35;
+  const maxGust = Math.max(...daily.wind_gusts_10m_max.filter(Number.isFinite));
+  const precipMax = Math.max(...daily.precipitation_probability_max.filter(Number.isFinite));
+  if (maxGust >= unitWindThreshold) score += 20;
+  if (precipMax >= 60) score += 15;
+  if (current.surface_pressure <= 1002) score += 15;
+  if (bestValue > 80) score += 20;
+
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  const level = score >= 75 ? "High potential" : score >= 45 ? "Conditional" : "Low-end";
+  const window = `${formatHour(hourly.time[bestIndex])} - ${formatHour(hourly.time[Math.min(bestIndex + 2, hourly.time.length - 1)])}`;
+
+  return { score, level, window };
 }
 
 function renderAlerts() {
